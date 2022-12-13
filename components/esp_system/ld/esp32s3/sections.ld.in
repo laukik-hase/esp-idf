@@ -4,6 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "sdkconfig.h"
+
+/* DRAM region from 0x3FCEEE34 is reserved for ROM functions
+ * and user app should not be able to access it. A split line
+ * is added to protect reserved ROM region. As the split line
+ * can only be added at 256 byte aligned address, alignment
+ * correction is used here.
+ */
+#define ROM_DRAM_RESERVE_START          ((0x3FCEEE34) & ~((256) - 1))
+
 /* Default entry point */
 ENTRY(call_start_cpu0);
 
@@ -131,10 +141,34 @@ SECTIONS
   ASSERT((_rtc_fast_length <= LENGTH(rtc_data_seg)),
           "RTC_FAST segment data does not fit.")
 
+  .iram0.user_iram :
+  {
+    _iram_start = ABSOLUTE(.);
+#ifdef CONFIG_ESP_PRIVILEGE_SEPARATION_ENABLE
+    _reserve_w1_iram_start = ABSOLUTE(.);
+    . += CONFIG_PA_ALLOCATE_USER_IRAM_SIZE;
+    . += 16;
+    /* This alignment is the requirement of WORLD controller vecbase register.
+     * The vector table should be aligned at 1024 boundary.
+     * As the WORLD0 vector table will start right after this section,
+     * it has to be aligned at 1024 bytes.
+     */
+    . = ALIGN (0x400);
+    _reserve_w1_iram_end = ABSOLUTE(.);
+#if CONFIG_ESP32S3_INSTRUCTION_CACHE_16KB
+    /* In case the instruction cache size is 16KB, the other 16KB block will be used as IRAM.
+     * There is a single permission block for this 16KB memory, so we allocate it entirely to
+     * WORLD1.
+     */
+    . = ABSOLUTE(0x40378000);
+    _reserve_w1_iram_end = ABSOLUTE(.);
+#endif
+#endif
+  } > iram0_0_seg
+
   /* Send .iram0 code to iram */
   .iram0.vectors :
   {
-    _iram_start = ABSOLUTE(.);
     /* Vectors go to IRAM */
     _vector_table = ABSOLUTE(.);
     . = 0x0;
@@ -248,6 +282,27 @@ SECTIONS
     . = ALIGN (8);
     _bss_end = ABSOLUTE(.);
   } > dram0_0_seg
+
+#ifdef CONFIG_ESP_PRIVILEGE_SEPARATION_ENABLE
+  .reserve_w1_dram (NOLOAD) :
+  {
+     /* Assign W1 DRAM start address as per the size configured in Kconfig.
+      * 0x3FCEEE34 - 0x3FCF0000 space is reserved for ROM code so to avoid
+      * overlapping for reserved memory regions, treat 0x3FCEEE34 as the end of DRAM region
+      */
+#if CONFIG_PA_MEMORY_ALLOCATE_PROTECTED
+     _reserve_w1_dram_start = ABSOLUTE(_data_start + CONFIG_PA_ALLOCATE_DRAM_SIZE);
+#elif CONFIG_PA_MEMORY_ALLOCATE_USER
+     _reserve_w1_dram_start = ABSOLUTE(ROM_DRAM_RESERVE_START - CONFIG_PA_ALLOCATE_DRAM_SIZE);
+#endif
+     /* Align the starting boundary to 512 bytes as it is a requirement for the PMS split line */
+     _reserve_w1_dram_start = ABSOLUTE((_reserve_w1_dram_start + 0x200 - 1) & ~(0x200 - 1));
+     _reserve_w1_dram_end = ABSOLUTE(ROM_DRAM_RESERVE_START);
+  } > dram0_0_seg
+
+  ASSERT((_heap_start <= _reserve_w1_dram_start),
+          "Protected DRAM segment contents does not fit.")
+#endif
 
   ASSERT(((_bss_end - ORIGIN(dram0_0_seg)) <= LENGTH(dram0_0_seg)), "DRAM segment data does not fit.")
 

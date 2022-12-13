@@ -35,6 +35,11 @@ typedef union {
 
 #define DRAM_SRAM_START             0x3FC7C000
 
+/*
+ * Commenting the following definition as they are defined in hal/memprot_types.h.
+ * For S3 memprot support, we have cherry-picked a commit from the next release
+ */
+/*
 #ifndef MAP_DRAM_TO_IRAM
 #define MAP_DRAM_TO_IRAM(addr)       (addr - DRAM_SRAM_START + SOC_IRAM_LOW)
 #endif
@@ -42,6 +47,7 @@ typedef union {
 #ifndef MAP_IRAM_TO_DRAM
 #define MAP_IRAM_TO_DRAM(addr)       (addr - SOC_IRAM_LOW + DRAM_SRAM_START)
 #endif
+*/
 
 //IRAM0
 

@@ -108,6 +108,7 @@
 #define DR_REG_EXT_MEM_ENC                      0x600CC000
 
 #define DR_REG_ASSIST_DEBUG_BASE                0x600CE000
+#define DR_REG_WORLD_CONTROLLER_BASE            0x600D0000
 #define DR_REG_WORLD_CNTL_BASE                  0x600D0000
 #define DR_REG_DPORT_END                        0x600D3FFC
 

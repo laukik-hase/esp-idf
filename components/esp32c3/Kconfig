@@ -187,4 +187,14 @@ menu "ESP32C3-Specific"
             If enabled, this disables the linking of binary libraries in the application build. Note
             that after enabling this Wi-Fi/Bluetooth will not work.
 
+    config ESP_PRIVILEGE_SEPARATION_ENABLE
+        bool "Enable privilege separation using WORLD controller"
+        default n
+        select FREERTOS_SUPPORT_STATIC_ALLOCATION
+        select FREERTOS_ENABLE_STATIC_TASK_CLEAN_UP
+        select FREERTOS_PLACE_FUNCTIONS_INTO_FLASH
+        select NEWLIB_NANO_FORMAT
+        help
+            Enable user kernel separation
+
 endmenu  # ESP32C3-Specific

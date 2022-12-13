@@ -94,6 +94,9 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "esp_private/panic_reason.h"
 #include "sdkconfig.h"
 #include "soc/soc.h"
+#include "soc/sensitive_reg.h"
+#include "soc/extmem_reg.h"
+#include "soc/world_controller_reg.h"
 
 /*
   Define for workaround: pin no-cpu-affinity tasks to a cpu when fpu is used.
@@ -571,6 +574,98 @@ _call_alignment_handler:
     j       .LS_exit
 #endif
 
+#ifdef CONFIG_ESP_PRIVILEGE_SEPARATION_ENABLE
+    .align      4
+_xt_perm_violation:
+    movi    a0, EXCCAUSE_LEVEL1INTERRUPT
+    wsr     a0, EXCCAUSE
+    j       _xt_lowint1
+
+    .type       _xt_user_panic_handler,@function
+    .align      4
+_xt_user_panic_handler:
+    mov     a0, sp                          /* sp == a1 */
+    addi    sp, sp, -XT_STK_FRMSZ           /* allocate interrupt stack frame */
+    s32i    a0, sp, XT_STK_A1               /* save pre-interrupt SP */
+    rsr     a0, PS                          /* save interruptee's PS */
+    s32i    a0, sp, XT_STK_PS
+    rsr     a0, EPC_1                       /* save interruptee's PC */
+    s32i    a0, sp, XT_STK_PC
+    rsr     a0, EXCSAVE_1                   /* save interruptee's a0 */
+    s32i    a0, sp, XT_STK_A0
+    movi    a0, _xt_user_exit               /* save exit point for dispatch */
+    s32i    a0, sp, XT_STK_EXIT
+
+    /* Save exc cause and vaddr into exception frame */
+    rsr     a0, EXCCAUSE
+    s32i    a0, sp, XT_STK_EXCCAUSE
+    rsr     a0, EXCVADDR
+    s32i    a0, sp, XT_STK_EXCVADDR
+
+    /* EXCSAVE_1 should now be free to use. Use it to keep a copy of the
+    current stack pointer that points to the exception frame (XT_STK_FRAME).*/
+    #ifdef XT_DEBUG_BACKTRACE
+    #ifndef __XTENSA_CALL0_ABI__
+    mov     a0, sp
+    wsr     a0, EXCSAVE_1
+    #endif
+    #endif
+
+    /* Save rest of interrupt context and enter RTOS. */
+    call0   XT_RTOS_INT_ENTER               /* common RTOS interrupt entry */
+
+    /* !! We are now on the RTOS system stack !! */
+
+    /* Set up PS for C, enable interrupts above this level and clear EXCM. */
+    #ifdef __XTENSA_CALL0_ABI__
+    movi    a0, PS_INTLEVEL(1) | PS_UM
+    #else
+    movi    a0, PS_INTLEVEL(1) | PS_UM | PS_WOE
+    #endif
+    wsr     a0, PS
+    rsync
+
+    /* This bit of code provides a nice debug backtrace in the debugger.
+       It does take a few more instructions, so undef XT_DEBUG_BACKTRACE
+       if you want to save the cycles.
+       At this point, the exception frame should have been allocated and filled,
+       and current sp points to the interrupt stack (for non-nested interrupt)
+       or below the allocated exception frame (for nested interrupts). Copy the
+       pre-exception's base save area below the current SP.
+    */
+    #ifdef XT_DEBUG_BACKTRACE
+    #ifndef __XTENSA_CALL0_ABI__
+    rsr     a0, EXCSAVE_1                   /* Get exception frame pointer stored in EXCSAVE_x */
+    l32i    a3, a0, XT_STK_A0               /* Copy pre-exception a0 (return address) */
+    s32e    a3, a1, -16
+    l32i    a3, a0, XT_STK_A1               /* Copy pre-exception a1 (stack pointer) */
+    s32e    a3, a1, -12
+    /* Backtracing only needs a0 and a1, no need to create full base save area.
+       Also need to change current frame's return address to point to pre-exception's
+       last run instruction.
+     */
+    rsr     a0, EPC_1                       /* return address */
+    movi    a4, 0xC0000000                  /* constant with top 2 bits set (call size) */
+    or      a0, a0, a4                      /* set top 2 bits */
+    addx2   a0, a4, a0                      /* clear top bit -- simulating call4 size   */
+    #endif
+    #endif
+
+    /* OK to call C code at this point, dispatch user panic handler */
+    /* Interrupt number for WORLD1 interrupts/exceptions */
+    movi    a3, 18
+    get_percpu_entry_for a3, a12
+    movi    a4, _xt_interrupt_table
+    addx8   a3, a3, a4                      /* a3 = address of interrupt table entry */
+    l32i    a4, a3, XIE_HANDLER             /* a4 = handler address */
+    mov     a2, a6                          /* save in windowed reg */
+    l32i    a6, a3, XIE_ARG                 /* a6 = handler arg */
+    callx4  a4                              /* call handler */
+
+    /* Done handling user space exception, transfer control to OS */
+    call0   XT_RTOS_INT_EXIT                /* does not return directly here */
+#endif
+
 /*
 --------------------------------------------------------------------------------
   User exception handler.
@@ -581,7 +676,27 @@ _call_alignment_handler:
     .align      4
 
 _xt_user_exc:
-
+#ifdef CONFIG_ESP_PRIVILEGE_SEPARATION_ENABLE
+    wsr     a2, DEPC
+    movi    a0, 0x50000000
+    movi    a2, 0
+    s32i    a2, a0, 0
+    addi    a2, a2, 1
+    s32i    a2, a0, 0
+    addi    a2, a2, 1
+    s32i    a2, a0, 0
+    addi    a2, a2, 1
+    s32i    a2, a0, 0
+    addi    a2, a2, 1
+    s32i    a2, a0, 0
+    addi    a2, a2, 1
+    s32i    a2, a0, 0
+    addi    a2, a2, 1
+    s32i    a2, a0, 0
+    l32i    a0, a0, 0
+    memw
+    rsr     a2, DEPC
+#endif
     /* If level 1 interrupt then jump to the dispatcher */
     rsr     a0, EXCCAUSE
     beqi    a0, EXCCAUSE_LEVEL1INTERRUPT, _xt_lowint1
@@ -606,6 +721,38 @@ _xt_user_exc:
     beqi    a0, 8, _call_alignment_handler
     addi    a0, a0, 1
 .LS_exit:
+#endif
+
+#ifdef CONFIG_ESP_PRIVILEGE_SEPARATION_ENABLE
+    /* Check for IRAM violation */
+    movi    a0, SENSITIVE_CORE_0_IRAM0_PMS_MONITOR_2_REG
+    l32i    a0, a0, 0
+    extui   a0, a0, 0, 1
+    beqi    a0, 1, _xt_perm_violation
+
+    /* Check for DRAM violation */
+    movi    a0, SENSITIVE_CORE_0_DRAM0_PMS_MONITOR_2_REG
+    l32i    a0, a0, 0
+    extui   a0, a0, 0, 1
+    beqi    a0, 1, _xt_perm_violation
+
+    /* Check for IBUS Cache violation */
+    movi    a0, EXTMEM_CORE0_ACS_CACHE_INT_ST_REG
+    l32i    a0, a0, 0
+    extui   a0, a0, 0, 3
+    bgei    a0, 1, _xt_perm_violation
+
+    /* Check for DBUS Cache violation */
+    movi    a0, EXTMEM_CORE0_ACS_CACHE_INT_ST_REG
+    l32i    a0, a0, 0
+    extui   a0, a0, 2, 3
+    bgei    a0, 1, _xt_perm_violation
+
+    /* Check if exception occurred in user space (WORLD1) */
+    movi    a0, WORLD_CONTROLLER_WCL_CORE_0_STATUSTABLE1_REG
+    l32i    a0, a0, 0
+    extui   a0, a0, 0, 1
+    beqi    a0, 1, _xt_user_panic_handler
 #endif
 
     /* Handle all other exceptions. All can have user-defined handlers. */
@@ -737,77 +884,6 @@ _xt_user_exit:
     rsync                                   /* ensure PS and EPC written */
     rfe                                     /* PS.EXCM is cleared */
 
-
-/*
-
---------------------------------------------------------------------------------
-Syscall Exception Handler (jumped to from User Exception Handler).
-Syscall 0 is required to spill the register windows (no-op in Call 0 ABI).
-Only syscall 0 is handled here. Other syscalls return -1 to caller in a2.
---------------------------------------------------------------------------------
-*/
-
-    .section .iram1,"ax"
-    .type       _xt_syscall_exc,@function
-    .align      4
-_xt_syscall_exc:
-
-    #ifdef __XTENSA_CALL0_ABI__
-    /*
-    Save minimal regs for scratch. Syscall 0 does nothing in Call0 ABI.
-    Use a minimal stack frame (16B) to save A2 & A3 for scratch.
-    PS.EXCM could be cleared here, but unlikely to improve worst-case latency.
-    rsr     a0, PS
-    addi    a0, a0, -PS_EXCM_MASK
-    wsr     a0, PS
-    */
-    addi    sp, sp, -16
-    s32i    a2, sp, 8
-    s32i    a3, sp, 12
-    #else   /* Windowed ABI */
-    /*
-    Save necessary context and spill the register windows.
-    PS.EXCM is still set and must remain set until after the spill.
-    Reuse context save function though it saves more than necessary.
-    For this reason, a full interrupt stack frame is allocated.
-    */
-    addi    sp, sp, -XT_STK_FRMSZ           /* allocate interrupt stack frame */
-    s32i    a12, sp, XT_STK_A12             /* _xt_context_save requires A12- */
-    s32i    a13, sp, XT_STK_A13             /* A13 to have already been saved */
-    call0   _xt_context_save
-    #endif
-
-    /*
-    Grab the interruptee's PC and skip over the 'syscall' instruction.
-    If it's at the end of a zero-overhead loop and it's not on the last
-    iteration, decrement loop counter and skip to beginning of loop.
-    */
-    rsr     a2, EPC_1                       /* a2 = PC of 'syscall' */
-    addi    a3, a2, 3                       /* ++PC                 */
-    #if XCHAL_HAVE_LOOPS
-    rsr     a0, LEND                        /* if (PC == LEND       */
-    bne     a3, a0, 1f
-    rsr     a0, LCOUNT                      /*     && LCOUNT != 0)  */
-    beqz    a0, 1f                          /* {                    */
-    addi    a0, a0, -1                      /*   --LCOUNT           */
-    rsr     a3, LBEG                        /*   PC = LBEG          */
-    wsr     a0, LCOUNT                      /* }                    */
-    #endif
-1:  wsr     a3, EPC_1                       /* update PC            */
-
-    /* Restore interruptee's context and return from exception. */
-    #ifdef __XTENSA_CALL0_ABI__
-    l32i    a2, sp, 8
-    l32i    a3, sp, 12
-    addi    sp, sp, 16
-    #else
-    call0   _xt_context_restore
-    addi    sp, sp, XT_STK_FRMSZ
-    #endif
-    movi    a0, -1
-    movnez  a2, a0, a2                      /* return -1 if not syscall 0 */
-    rsr     a0, EXCSAVE_1
-    rfe
 
 /*
 --------------------------------------------------------------------------------

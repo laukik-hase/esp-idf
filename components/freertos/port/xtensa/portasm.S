@@ -25,9 +25,22 @@
 
 #include "xtensa_rtos.h"
 #include "sdkconfig.h"
+#include "soc/sensitive_reg.h"
+#include "soc/world_controller_reg.h"
 
 #define TOPOFSTACK_OFFS                 0x00    /* StackType_t *pxTopOfStack */
 #define CP_TOPOFSTACK_OFFS              0x04    /* xMPU_SETTINGS.coproc_area */
+
+/*
+ * uxTCBNumber and uxTaskNumber members are added in TCB structure when
+ * FreeRTOS Trace facility is enabled. WORLD offset is changed by 8 bytes
+ * because both members are 4 bytes in size.
+ */
+#ifdef CONFIG_FREERTOS_USE_TRACE_FACILITY
+#define WORLD_OFFSET    (0x4c + CONFIG_FREERTOS_MAX_TASK_NAME_LEN + 3 + 8)&~3
+#else
+#define WORLD_OFFSET    (0x4c + CONFIG_FREERTOS_MAX_TASK_NAME_LEN + 3 + 4)&~3
+#endif
 
 .extern pxCurrentTCB
 
@@ -110,6 +123,26 @@ _frxt_int_enter:
 
     /* Save the rest of the interrupted context (preserves A12-13). */
     call0   _xt_context_save
+
+#ifdef CONFIG_ESP_PRIVILEGE_SEPARATION_ENABLE
+    /* Save WORLD in Thread Local Storage */
+    movi    a2, WORLD_CONTROLLER_WCL_CORE_0_STATUSTABLE1_REG
+    l32i    a3, a2, 0
+    // Zero out the table entry
+    movi    a4, 0
+    s32i    a4, a2, 0
+    // Extract the value at WORLD bit
+    movi    a2, 1
+    and     a2, a3, a2
+
+    getcoreid a4
+
+    movi    a3,  pxCurrentTCB
+    addx4	a3,  a4, a3
+    l32i    a3,  a3, 0
+    s32i    a2,  a3, WORLD_OFFSET
+    memw
+#endif
 
     /*
     Save interrupted task's SP in TCB only if not nesting.
@@ -243,6 +276,34 @@ _frxt_int_exit:
     is a nested interrupt, or the interrupted task was not preempted.
     In either case there's no need to load the SP.
     */
+
+#ifdef CONFIG_ESP_PRIVILEGE_SEPARATION_ENABLE
+    /* Restore WORLD from the TLS */
+    getcoreid a4
+    movi    a2,  pxCurrentTCB
+    addx4	a2,  a4, a2
+    l32i    a2,  a2, 0
+    l32i    a3,  a2, WORLD_OFFSET
+    beqz    a3,  .skip_restore_world
+
+    movi    a3, 2
+    /*TODO: Decide register based on core in case of dual core setup */
+    movi    a4, WORLD_CONTROLLER_WCL_CORE_0_WORLD_PREPARE_REG
+    s32i    a3, a4, 0
+
+    /* Set TRIGGER_ADDR to the return address; held by EPC */
+    l32i    a3, a1, XT_STK_PC
+    movi    a4, WORLD_CONTROLLER_WCL_CORE_0_WORLD_TRIGGER_ADDR_REG
+    s32i    a3, a4, 0
+
+    movi    a3, 1
+    /*TODO: Decide register based on core in case of dual core setup */
+    movi    a4, WORLD_CONTROLLER_WCL_CORE_0_WORLD_UPDATE_REG
+    s32i    a3, a4, 0
+
+.skip_restore_world:
+    memw
+#endif
 
     /* Restore full context from interrupt stack frame */
     call0   _xt_context_restore
@@ -442,6 +503,30 @@ _frxt_dispatch:
     l32i    sp,  a3, TOPOFSTACK_OFFS     /* SP = next_TCB->pxTopOfStack;  */
     s32i    a3,  a2, 0
 
+#ifdef CONFIG_ESP_PRIVILEGE_SEPARATION_ENABLE
+    /* Restore WORLD from the TLS */
+    l32i    a4,  a3, WORLD_OFFSET
+    beqz    a4,  1f
+
+    movi    a3, 2
+    /*TODO: Decide register based on core in case of dual core setup */
+    movi    a4, WORLD_CONTROLLER_WCL_CORE_0_WORLD_PREPARE_REG
+    s32i    a3, a4, 0
+
+    /* Set TRIGGER_ADDR to the return address; held by EPC */
+    l32i    a3, a1, XT_STK_PC
+    movi    a4, WORLD_CONTROLLER_WCL_CORE_0_WORLD_TRIGGER_ADDR_REG
+    s32i    a3, a4, 0
+
+    movi    a3, 1
+    /*TODO: Decide register based on core in case of dual core setup */
+    movi    a4, WORLD_CONTROLLER_WCL_CORE_0_WORLD_UPDATE_REG
+    s32i    a3, a4, 0
+
+1:
+    memw
+#endif
+
     /* Determine the type of stack frame. */
     l32i    a2,  sp, XT_STK_EXIT        /* exit dispatcher or solicited flag */
     bnez    a2,  .L_frxt_dispatch_stk
@@ -571,10 +656,29 @@ vPortYield:
     call0   _xt_coproc_savecs
     #endif
 
+#ifdef CONFIG_ESP_PRIVILEGE_SEPARATION_ENABLE
+    /* vPortYield does not raise an interrupt before switching context,
+     * so we read the debug register to know the current WORLD
+     */
+    movi    a2, WORLD_CONTROLLER_WCL_CORE_0_WORLD_IRAM0_REG
+    l32i    a3, a2, 0
+    // Extract the WORLD1 bit
+    movi    a4, 2
+    and     a4, a3, a4
+
+    movi    a2,  pxCurrentTCB
+    getcoreid a3
+    addx4	a2,  a3, a2
+    l32i    a2,  a2, 0                  /* a2 = pxCurrentTCB                */
+    /* Store the WORLD */
+    s32i    a4,  a2, WORLD_OFFSET
+#else
     movi    a2,  pxCurrentTCB
 	getcoreid a3
 	addx4	a2,  a3, a2
     l32i    a2,  a2, 0                  /* a2 = pxCurrentTCB                */
+#endif
+
     movi    a3,  0
     s32i    a3,  sp, XT_SOL_EXIT        /* 0 to flag as solicited frame     */
     s32i    sp,  a2, TOPOFSTACK_OFFS    /* pxCurrentTCB->pxTopOfStack = SP  */

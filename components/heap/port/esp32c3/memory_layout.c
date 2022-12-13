@@ -75,7 +75,7 @@ const size_t soc_memory_type_count = sizeof(soc_memory_types) / sizeof(soc_memor
  */
 #define APP_USABLE_DRAM_END           (SOC_ROM_STACK_START - SOC_ROM_STACK_SIZE)
 
-const soc_memory_region_t soc_memory_regions[] = {
+__attribute__((weak)) const soc_memory_region_t soc_memory_regions[] = {
     { 0x3FC80000,           0x20000,                                   SOC_MEMORY_TYPE_DEFAULT,     0x40380000}, //D/IRAM level1, can be used as trace memory
     { 0x3FCA0000,           0x20000,                                   SOC_MEMORY_TYPE_DEFAULT,     0x403A0000}, //D/IRAM level2, can be used as trace memory
     { 0x3FCC0000,           (APP_USABLE_DRAM_END-0x3FCC0000),          SOC_MEMORY_TYPE_DEFAULT,     0x403C0000}, //D/IRAM level3, can be used as trace memory
@@ -85,7 +85,7 @@ const soc_memory_region_t soc_memory_regions[] = {
 #endif
 };
 
-const size_t soc_memory_region_count = sizeof(soc_memory_regions) / sizeof(soc_memory_region_t);
+__attribute__((weak)) const size_t soc_memory_region_count = sizeof(soc_memory_regions) / sizeof(soc_memory_region_t);
 
 
 extern int _data_start, _heap_start, _iram_start, _iram_end, _rtc_force_slow_end;

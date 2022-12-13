@@ -103,6 +103,11 @@ class GDBHelper:
 
     def process_panic_output(self, panic_output, logger, target):  # type: (bytes, Logger, str) -> None
         panic_output_file = None
+        user_app = os.path.dirname(self.elf_file) + '/user_app/user_app.elf'
+        if os.path.isfile(user_app):
+            user_symbols = 'add-symbol-file %s' % user_app
+        else:
+            user_symbols = ''
         try:
             # On Windows, the temporary file can't be read unless it is closed.
             # Set delete=False and delete the file manually later.
@@ -112,6 +117,7 @@ class GDBHelper:
             cmd = [self.toolchain_prefix + 'gdb',
                    '--batch', '-n',
                    self.elf_file,
+                   '-ex', user_symbols,
                    '-ex', "target remote | \"{python}\" \"{script}\" --target {target} \"{output_file}\""
                        .format(python=sys.executable,
                                script=PANIC_OUTPUT_DECODE_SCRIPT,

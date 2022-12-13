@@ -73,7 +73,7 @@ const size_t soc_memory_type_count = sizeof(soc_memory_types) / sizeof(soc_memor
  */
 #define APP_USABLE_DRAM_END           (SOC_ROM_STACK_START - SOC_ROM_STACK_SIZE)
 
-const soc_memory_region_t soc_memory_regions[] = {
+__attribute__((weak)) const soc_memory_region_t soc_memory_regions[] = {
 #ifdef CONFIG_SPIRAM
     { SOC_EXTRAM_DATA_LOW,  SOC_EXTRAM_DATA_SIZE,                       SOC_MEMORY_TYPE_SPIRAM,     0}, //SPI SRAM, if available
 #endif
@@ -99,7 +99,7 @@ const soc_memory_region_t soc_memory_regions[] = {
 #endif
 };
 
-const size_t soc_memory_region_count = sizeof(soc_memory_regions) / sizeof(soc_memory_region_t);
+__attribute__((weak)) const size_t soc_memory_region_count = sizeof(soc_memory_regions) / sizeof(soc_memory_region_t);
 
 extern int _data_start, _heap_start, _iram_start, _iram_end, _rtc_force_fast_end, _rtc_noinit_end; // defined in sections.ld.in
 

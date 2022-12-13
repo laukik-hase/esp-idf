@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import subprocess
 import sys
 from typing import BinaryIO, Callable, Optional, Union  # noqa: F401
@@ -48,4 +49,14 @@ def lookup_pc_address(pc_addr, toolchain_prefix, elf_file):  # type: (str, str, 
             return translation.decode()
     except OSError as e:
         red_print('%s: %s' % (' '.join(cmd), e))
+
+    user_app_elf = os.path.dirname(elf_file) + '/user_app/user_app.elf'
+    if os.path.isfile(user_app_elf):
+        user_cmd = ['%saddr2line' % toolchain_prefix, '-pfiaC', '-e', user_app_elf, pc_addr]
+        try:
+            translation = subprocess.check_output(user_cmd, cwd='.')
+            if b'?? ??:0' not in translation:
+                return translation.decode()
+        except OSError as e:
+            red_print('%s: %s' % (' '.join(user_cmd), e))
     return None

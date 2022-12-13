@@ -236,3 +236,69 @@ _xt_nmi:
     rfi     XCHAL_NMILEVEL
 
 #endif  /* NMI */
+
+    .global  _xt_syscall_exc
+    .weak _xt_syscall_exc
+    .set _xt_syscall_exc, _xt_default_syscall_exc
+    .section .iram1,"ax"
+    .type       _xt_default_syscall_exc,@function
+    .align      4
+
+_xt_default_syscall_exc:
+    #ifdef __XTENSA_CALL0_ABI__
+    /*
+    Save minimal regs for scratch. Syscall 0 does nothing in Call0 ABI.
+    Use a minimal stack frame (16B) to save A2 & A3 for scratch.
+    PS.EXCM could be cleared here, but unlikely to improve worst-case latency.
+    rsr     a0, PS
+    addi    a0, a0, -PS_EXCM_MASK
+    wsr     a0, PS
+    */
+    addi    sp, sp, -16
+    s32i    a2, sp, 8
+    s32i    a3, sp, 12
+    #else   /* Windowed ABI */
+    /*
+    Save necessary context and spill the register windows.
+    PS.EXCM is still set and must remain set until after the spill.
+    Reuse context save function though it saves more than necessary.
+    For this reason, a full interrupt stack frame is allocated.
+    */
+    addi    sp, sp, -XT_STK_FRMSZ           /* allocate interrupt stack frame */
+    s32i    a12, sp, XT_STK_A12             /* _xt_context_save requires A12- */
+    s32i    a13, sp, XT_STK_A13             /* A13 to have already been saved */
+    call0   _xt_context_save
+    #endif
+
+    /*
+    Grab the interruptee's PC and skip over the 'syscall' instruction.
+    If it's at the end of a zero-overhead loop and it's not on the last
+    iteration, decrement loop counter and skip to beginning of loop.
+    */
+    rsr     a2, EPC_1                       /* a2 = PC of 'syscall' */
+    addi    a3, a2, 3                       /* ++PC                 */
+    #if XCHAL_HAVE_LOOPS
+    rsr     a0, LEND                        /* if (PC == LEND       */
+    bne     a3, a0, 1f
+    rsr     a0, LCOUNT                      /*     && LCOUNT != 0)  */
+    beqz    a0, 1f                          /* {                    */
+    addi    a0, a0, -1                      /*   --LCOUNT           */
+    rsr     a3, LBEG                        /*   PC = LBEG          */
+    wsr     a0, LCOUNT                      /* }                    */
+    #endif
+
+1:
+    wsr     a3, EPC_1                       /* update PC            */
+
+    /* Restore interruptee's context and return from exception. */
+    #ifdef __XTENSA_CALL0_ABI__
+    l32i    a2, sp, 8
+    l32i    a3, sp, 12
+    addi    sp, sp, 16
+    #else
+    call0   _xt_context_restore
+    addi    sp, sp, XT_STK_FRMSZ
+    #endif
+
+    rsr     a0, EXCSAVE_1
+    rfe
