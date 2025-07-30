@@ -266,6 +266,10 @@ if(CONFIG_ESP_TLS_USE_DS_PERIPHERAL)
     target_sources(mbedcrypto PRIVATE "${COMPONENT_DIR}/port/esp_ds/esp_rsa_sign_alt.c")
 endif()
 
+if(CONFIG_SOC_HMAC_SUPPORTED)
+    target_sources(mbedcrypto PRIVATE "${COMPONENT_DIR}/port/esp_hmac_pbkdf2.c")
+endif()
+
 # Note: some mbedTLS hardware acceleration can be enabled/disabled by config.
 #
 # We don't need to filter aes.c as this uses a different prefix (esp_aes_x) and the

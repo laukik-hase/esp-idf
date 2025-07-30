@@ -13,6 +13,7 @@
 #include "mbedtls/ecdsa.h"
 #include "mbedtls/sha256.h"
 #include "ecdsa/ecdsa_alt.h"
+#include "hal/hmac_types.h"
 
 #include "esp_tee.h"
 #include "esp_tee_sec_storage.h"
@@ -252,7 +253,6 @@ TEST_CASE("Test TEE Secure Storage - Operations with invalid/non-existent keys",
     // Test ECDSA key with AES operation
     ESP_LOGI(TAG, "Key ID: %s - Trying AES operation with ECDSA key...", key_cfg.id);
     esp_err_t err = esp_tee_sec_storage_clear_key(key_cfg.id);
-    ESP_LOGW(TAG, "err: %x", err);
     TEST_ASSERT_TRUE(err == ESP_OK || err == ESP_ERR_NOT_FOUND);
     TEST_ESP_OK(esp_tee_sec_storage_gen_key(&key_cfg));
     TEST_ESP_ERR(ESP_ERR_INVALID_STATE, esp_tee_sec_storage_aead_encrypt(&aead_ctx, tag, sizeof(tag), ciphertext));
@@ -512,3 +512,30 @@ TEST_CASE("Test TEE Secure Storage - mbedtls ECDSA signing", "[mbedtls]")
 #endif
 }
 #endif
+
+TEST_CASE("Test TEE Secure Storage - ECDSA signing with PBKDF2 (HMAC) derived key", "[sec_storage]")
+{
+    /* TODO: Enable test-case in CI */
+    ESP_LOGW(TAG, "Cannot run in CI yet - need runner with HMAC key burnt in eFuse");
+
+//     uint8_t test_salt[16];
+//     esp_fill_random(test_salt, sizeof(test_salt));
+
+//     esp_tee_sec_storage_pbkdf2_ctx_t ctx = {
+//         .salt = test_salt,
+//         .salt_len = sizeof(test_salt),
+//         .key_type = ESP_SEC_STG_KEY_ECDSA_SECP256R1
+//     };
+
+//     esp_tee_sec_storage_ecdsa_sign_t sign = {};
+//     esp_tee_sec_storage_ecdsa_pubkey_t pubkey = {};
+
+//     TEST_ESP_OK(esp_tee_sec_storage_ecdsa_sign_pbkdf2(&ctx, sha, sizeof(sha), &sign, &pubkey));
+//     TEST_ESP_OK(verify_ecdsa_sign(sha, sizeof(sha), &pubkey, &sign, false));
+
+// #if CONFIG_SECURE_TEE_SEC_STG_SUPPORT_SECP192R1_SIGN && !TEMPORARY_DISABLED_FOR_TARGETS(ESP32H2)
+//     ctx.key_type = ESP_SEC_STG_KEY_ECDSA_SECP192R1;
+//     TEST_ESP_OK(esp_tee_sec_storage_ecdsa_sign_pbkdf2(&ctx, sha, sizeof(sha), &sign, &pubkey));
+//     TEST_ESP_OK(verify_ecdsa_sign(sha, sizeof(sha), &pubkey, &sign, true));
+// #endif
+}
